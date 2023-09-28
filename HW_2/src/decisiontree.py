@@ -1,4 +1,8 @@
 import numpy as np
+import networkx as nx
+from networkx.drawing.nx_pydot import graphviz_layout
+import matplotlib.pyplot as plt
+import random
 
 
 class Node:
@@ -20,6 +24,9 @@ class DecisionTree:
         self.Y = Y
         idxs = [True for k in range(X.shape[0])]
         self.root = Node(idxs, root=True, split=None, leaf=True)
+        self.graph = nx.Graph()
+        label = None
+        self.graph.add_node(self.root, label=label)
 
     def fit(self, print_root_splits=False):
         self.makeSubtree(self.root, print_root_splits=print_root_splits)
@@ -48,8 +55,11 @@ class DecisionTree:
                 node.predict = 1
             else:
                 node.predict = 0
+            self.graph.nodes[node]['label'] = f" y = {node.predict}"
+
         else:
             node.split = dict(dim=split_dim, val=split_val)
+            self.graph.nodes[node]['label'] = r"$x_{} \geq {:.2f}$".format(split_dim + 1, split_val)
             node.leaf = False
             X = self.X
             parent_idx = node.train_idxs
@@ -57,6 +67,8 @@ class DecisionTree:
             idx_r = np.logical_and(X[:, split_dim] < split_val, parent_idx)
             node.left_child = Node(idx_l)
             node.right_child = Node(idx_r)
+            self.graph.add_edge(node.left_child, node, label="True")
+            self.graph.add_edge(node.right_child, node, label="False")
             self.makeSubtree(node.left_child)
             self.makeSubtree(node.right_child)
 
@@ -78,6 +90,25 @@ class DecisionTree:
                     split_dim = dim
 
         return split_val, split_dim
+
+    def print_tree(self, shape='s', size=1000, font_size=10, width=1, vert_gap=0.2, edge_font=8, node_color='b',
+                   f_name=None, fig_width=10, fig_height=10):
+        fig, ax = plt.subplots()
+        fig.set_figwidth(fig_width)
+        fig.set_figheight(fig_height)
+        pos = hierarchy_pos(self.graph, root=self.root, width=width, vert_gap=vert_gap)
+        labels = {node: self.graph.nodes[node]['label'] for node in self.graph.nodes}
+        nx.draw(self.graph, pos, node_shape=shape, node_size=size,
+                font_size=font_size, ax=ax, labels=labels, with_labels=True, node_color=node_color)
+        edge_labels = {edge: self.graph.edges[edge]['label'] for edge in self.graph.edges}
+        nx.draw_networkx_edge_labels(
+            self.graph, pos,
+            edge_labels=edge_labels,
+            font_color='black',
+            font_size=edge_font
+        )
+        if f_name is not None:
+            plt.savefig(f_name)
 
 
 def split_entropy(X, dim=0, val=0):
@@ -133,6 +164,70 @@ def gain_ratio(X, Y, dim=0, val=0, verbose=False):
             print("gain: {:f}".format(gain))
 
     return gain
+
+
+def hierarchy_pos(G, root=None, width=1., vert_gap=0.2, vert_loc=0, xcenter=0.5):
+    '''
+    From Joel's answer at https://stackoverflow.com/a/29597209/2966723.
+    Licensed under Creative Commons Attribution-Share Alike
+
+    If the graph is a tree this will return the positions to plot this in a
+    hierarchical layout.
+
+    G: the graph (must be a tree)
+
+    root: the root node of current branch
+    - if the tree is directed and this is not given,
+      the root will be found and used
+    - if the tree is directed and this is given, then
+      the positions will be just for the descendants of this node.
+    - if the tree is undirected and not given,
+      then a random choice will be used.
+
+    width: horizontal space allocated for this branch - avoids overlap with other branches
+
+    vert_gap: gap between levels of hierarchy
+
+    vert_loc: vertical location of root
+
+    xcenter: horizontal location of root
+    '''
+    if not nx.is_tree(G):
+        raise TypeError('cannot use hierarchy_pos on a graph that is not a tree')
+
+    if root is None:
+        if isinstance(G, nx.DiGraph):
+            root = next(iter(nx.topological_sort(G)))  # allows back compatibility with nx version 1.11
+        else:
+            root = random.choice(list(G.nodes))
+
+    def _hierarchy_pos(G, root, width=1., vert_gap=0.2, vert_loc=0, xcenter=0.5, pos=None, parent=None):
+        '''
+        see hierarchy_pos docstring for most arguments
+
+        pos: a dict saying where all nodes go if they have been assigned
+        parent: parent of this branch. - only affects it if non-directed
+
+        '''
+
+        if pos is None:
+            pos = {root: (xcenter, vert_loc)}
+        else:
+            pos[root] = (xcenter, vert_loc)
+        children = list(G.neighbors(root))
+        if not isinstance(G, nx.DiGraph) and parent is not None:
+            children.remove(parent)
+        if len(children) != 0:
+            dx = width / len(children)
+            nextx = xcenter - width / 2 - dx / 2
+            for child in children:
+                nextx += dx
+                pos = _hierarchy_pos(G, child, width=dx, vert_gap=vert_gap,
+                                     vert_loc=vert_loc - vert_gap, xcenter=nextx,
+                                     pos=pos, parent=root)
+        return pos
+
+    return _hierarchy_pos(G, root, width=width, vert_gap=vert_gap, vert_loc=vert_loc, xcenter=xcenter)
 
 
 def test():
